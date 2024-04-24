@@ -1,0 +1,165 @@
+---
+title: "FINAL_MATH4050"
+author: "Nam Tran Nguyen"
+date: "2024-04-16"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
+```
+  I use the "Online Food Dataset" from Kaggle. This dataset has the information about consumer preferences or behavior based on demographic and geographical variables. Based the the dataset, I will predict the current status of order, feedback, etc. to enhance the quality of service, and investigate the relationship of other factors with online food ordering behavior.
+
+First of all, I will read the data, and process the data. I decide to drop the educational Qualifications variables.
+```{r}
+# Read the CSV file 
+mydata = read.csv("onlinefoods.csv", header=TRUE)
+str(mydata)
+# Set seed for reproducibility
+set.seed(1)
+ # this removes the variable called "Educational Qualifications"
+mydata = within(mydata, rm(Educational.Qualifications)) 
+
+# Convert Feedback variable to factor
+mydata$Feedback = as.factor(mydata$Feedback )
+#check if there is any null data
+sum_na = sum(is.na(mydata))
+sum_na
+mydata = droplevels(na.omit(mydata))
+#Create indices for 90% training and 10% testing split
+index = sample(1:nrow(mydata), 0.9 * nrow(mydata))
+# Split data into training and testing datasets
+train_data = mydata[index, ]
+test_data = mydata[-index, ]
+```
+
+  I checked the data if it has any nulls data. Although there are no null data in this data set, I still adding the `droplevels(na.omit(mydata))` to ensure that I effectively cleaning the data by removing incomplete cases and tidying up the factor variables by removing unused levels.
+
+I. Decision Tree models
+  
+  Decision Tree is the model that make prediction using data in the same "fit" in the feature space. Because it display graphically, it is easy to predict. I apply the Decision Tree to t which predictors is the most specific to the "Feedback" response. the `tree()` function to fit a classification tree in order to predict `Feedback` using all variables.
+```{r}
+library(tree)
+# Fit the decision tree model
+myTree <- tree(Feedback ~ .,  train_data)
+# Summary of the model
+summary(myTree)
+```
+  The `summary()` function lists the variables that are used as internal nodes in the tree, the number of terminal nodes, and the training error rate. Here is the Decision Tree plot, as the picture below, I can tell that Age is the most significant predictor for `Feedback`.
+```{r}
+#Plot the Decision Tree
+plot(myTree,type = "uniform", xlim = 15, ylim = 4)
+text(myTree,cex = 0.5, all = TRUE)
+```
+  
+  I applied the Decision tree on the test data to predict the Feedback variables
+```{r}
+predict_myTree = predict(myTree,  test_data,type = "class")
+#create a confusion matrix
+table(predict_myTree, test_data$Feedback)
+#The error rate of test data when using the Decision Tree
+mean(predict_myTree != test_data$Feedback)
+```
+  The decision tree above have have the overfitting issue and very non-robusted, which is the small changes may cause the final estimated tree. It may be the reason for explaining that testing data error is much higher. 
+
+II. Random Forest
+
+   I will prefer to use a random forest model rather than the Decision tree to make the tree less correlation. In Random Forest, we can make the tree less correlation by restricting the variable at each branch.
+In Random Forest model, the mtry parameter controls the number of variables randomly sampled as candidates at each split when building individual trees in the forest. Here, I use `mtry=2`:
+```{r}
+library(randomForest)
+rf = randomForest(Feedback ~ . , train_data,
+    mtry = 2, importance = TRUE)
+rf
+#apply the prediction
+predict_rf = predict(rf, test_data,type = "class")
+#create a confusion matrix
+table(predict_rf, test_data$Feedback)
+mean(predict_rf != test_data$Feedback)
+```
+With Random Forest, I saw that the error rate of the training data is smaller than the Decision Tree, also, the test OOB error rate of the Random Forest is smaller than the Decision tree.
+
+III. Support Vector Machine Model
+
+  Support Vector Machine is inherently binary classifiers. However, they can be adapted to  allow to perform multi-class classification. The `library(e1071)` allows us to use fro mul-ti classes. In SVM, I use `tune()` to perform cross- validation.
+```{r}
+library(e1071)
+#function tune() perform the ten-fold cross-validation on a set of models
+tune.out1 = tune(svm, Feedback ~ .  , data = train_data, kernel = "linear", 
+      ranges = list(cost = c(0.1,0.5,1,2,5)))
+summary(tune.out1)
+```
+For the SVM, with kernel is `linear`, the summary shows that the lowest cross-validation error rate the  when the  parametercost = 0.5. I will apply that parameter to see how it predict on the test data:
+```{r}
+svm_linear= svm(Feedback ~ . , data = train_data, kernel = "linear", cost = 0.5)
+#Make predictions 
+predict_svm_linear = predict(svm_linear, test_data, type = "class")
+table (predict_svm_linear, test_data$Feedback)
+#error rate of the test data when using SVM with Kernel = "linear"
+mean (predict_svm_linear != test_data$Feedback)
+```
+
+To fit an SVM with a polynomial kernel we use kernel = "polynomial", use the degree argument to specify a degree for the polynomial kernel.
+```{r}
+tune.out2 = tune(svm, Feedback ~ ., data = train_data,
+                 kernel = "polynomial", 
+                  ranges = list(cost = c(0.1,0.5,1,5,10), degree = c(2, 3, 4)))
+summary(tune.out2)
+```
+For the SVM, with kernel is `polynomial`, the Summary shows that the lowest error rate is when the cost = 10, degree = 2. I will apply that parameter to see how it predict on the test data:
+```{r}
+svm_poly= svm(Feedback ~ . , data = train_data, kernel = "polynomial", cost = 10, degree = 2)
+# Make predictions 
+predict_svm_poly = predict(svm_poly, test_data, type = "class")
+table (predict_svm_poly, test_data$Feedback)
+#error rate of the test data when using SVM with Kernel = "polynomial"
+mean (predict_svm_poly != test_data$Feedback)
+```
+The test error rate for SVM with Kernel is "polynomial " is 0.1538462, which is higher when Kernel is linear. I will continue to check the behaviors when Kernel is radial.
+
+To fit an SVM with a radial kernel we use kernel = "radial",and use gamma to specify a value of gamma for the radial basis kernel.
+```{r}
+tune.out3 = tune(svm, Feedback ~ . , data = train_data,
+                kernel = "radial", 
+            ranges =list(cost=c(0.1,0.5,1,5,10),gamma=c(0.5,1,2,3,4)) )
+summary(tune.out3)
+```
+  For the SVM, with kernel is `radial`, the Summary shows that the best parameter when the cost = 5, gramma = 0.5. I will apply that parameter to see how it predict on the test data:
+```{r}
+svm_radial= svm(Feedback ~ . , data = train_data, kernel = "radial", cost = 5, gramma = 0.5)
+# Make predictions
+predict_svm_radial = predict(svm_radial, test_data, type = "class")
+table (predict_svm_radial, test_data$Feedback)
+#error rate of the test data when using SVM with Kernel = "polynomial"
+mean (predict_svm_radial != test_data$Feedback)
+```
+  The test error rate for SVM with Kernel is "radial " is 0.1282051, which is higher when Kernel is polynomial and smaller than when Kernal is linear.
+
+IV. Linear regression model
+
+  In linear regression, the response variable Y is quantitative. I will apply the linear regression model in order to prediction the Pin code with the predictor is longitude and latitude because the may have a strong correlatiton. 
+```{r}
+linear_regression = lm(Pin.code ~ latitude + longitude, data = train_data)
+summary(linear_regression)
+confint(linear_regression, level=0.95)
+
+```
+  As the result above, I can tell that latitude is a strongest predictor for Pin code, but longtitude is still a strong predictor, too. Both latitude and longtitude is a good predictor for Pincode because p-value is too small, and zero is in of the range for 95%CI for Beta 1. The equation for linear regression is 
+`y = 556813.22 -142.13 * X1 + 1.544491 * X2`
+
+V. Logistic Regression Model
+  Logistic Regression Model is used for predicting the probabilities of the different possible outcomes of a categorical dependent variable. I apply modeland use  the Feedback as response, where I use the Monthly Income as a predictor. 
+```{r}
+glm_regression = glm(Feedback ~ Monthly.Income , train_data, family = binomial) 
+# Predicting 
+predict_testdata_glm = predict(glm_regression, test_data, type = "response")
+# Converting probabilities to class labels
+predicted_labels = ifelse(predict_testdata_glm > 0.5, "Positive", "Negative")
+table(Predicted = predicted_labels, Actual = test_data$Feedback)
+#Error rate
+mean(predicted_labels != test_data$Feedback)
+```
+The test error rate of logistic regression is 0.17.
+
